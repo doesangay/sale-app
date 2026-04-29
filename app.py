@@ -3,19 +3,17 @@ Executive Sales Dashboard Streamlit Application.
 This module loads sales data, computes insights, and displays interactive charts.
 """
 
-import sys
-
+import streamlit as st
 import pandas as pd
 import plotly.express as px
-import streamlit as st
-from streamlit import runtime
+import sys
 from streamlit.web import cli as stcli
+from streamlit import runtime
 
 # ==========================================
 # 1. MAIN DASHBOARD FUNCTION
 # ==========================================
 def main():
-    """Main function to configure and render the dashboard."""
     # Website Configuration
     st.set_page_config(page_title="Executive Sales Dashboard", layout="wide", page_icon="📈")
     st.title("📈 Executive Sales & Insights Dashboard")
@@ -167,10 +165,7 @@ def main():
             query = user_query.lower()
 
             if "best product" in query or "top product" in query:
-                st.success(
-                    f"**Insight:** Best product is **{best_product}** "
-                    f"(${best_product_sales:,.0f})"
-                )
+                st.success(f"**Insight:** Best product is **{best_product}** (${best_product_sales:,.0f})")
             elif "top 3" in query or "best 3" in query:
                 top_3 = product_totals.head(3)
                 st.success(
@@ -192,12 +187,10 @@ def main():
             elif "total sales" in query or "total revenue" in query:
                 st.info(f"**Insight:** Total revenue is **${total_revenue:,.0f}**.")
             elif "average" in query:
-                st.info(
-                    f"**Insight:** You average **${avg_daily:,.0f}** "
-                    f"in sales per active day."
-                )
+                st.info(f"**Insight:** You average **${avg_daily:,.0f}** in sales per active day.")
             else:
                 st.error("I am programmed to answer about 'best/worst product', 'worst day', etc.")
+            
 
 # ==========================================
 # 2. BULLETPROOF PLAY BUTTON FIX
