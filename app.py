@@ -1,14 +1,15 @@
 """
-Executive Sales Dashboard Streamlit Application.
+Executive Sales Dashboard.
 This module loads sales data, computes insights, and displays interactive charts.
+Includes an expanded AI-style prompt engine for data interrogation.
 """
 
-import streamlit as st
+import sys
 import pandas as pd
 import plotly.express as px
-import sys
-from streamlit.web import cli as stcli
+import streamlit as st
 from streamlit import runtime
+from streamlit.web import cli as stcli
 
 # ==========================================
 # 1. MAIN DASHBOARD FUNCTION
@@ -38,6 +39,7 @@ def main():
             'Spin the Wheel', 'Race 6', 'Pick 3', 'Pick 4', 'Spin Roulette'
         ]
 
+        # Clean numeric columns (remove commas/quotes)
         for col_name in columns:
             if col_name in df_data.columns:
                 df_data[col_name] = pd.to_numeric(
@@ -45,6 +47,7 @@ def main():
                     errors='coerce'
                 )
 
+        # Clean Dates
         df_data['Date'] = pd.to_datetime(
             df_data['Date'].astype(str).str.strip(), errors='coerce', dayfirst=True
         )
@@ -57,17 +60,19 @@ def main():
     df, product_cols = load_data()
 
     if not df.empty:
-        # Statistical Insights
+        # --- Pre-calculations for Insights ---
         total_revenue = df['Total Sales'].sum()
         avg_daily = df['Total Sales'].mean()
-
+        
         product_totals = df[product_cols].sum().sort_values(ascending=False)
         best_product = product_totals.index[0]
         best_product_sales = product_totals.iloc[0]
 
-        day_totals = df.groupby('Day of Week')['Total Sales'].sum().sort_values(ascending=False)
-        best_day = day_totals.index[0]
-        best_day_sales = day_totals.iloc[0]
+        days_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+        day_totals = df.groupby('Day of Week')['Total Sales'].sum().reindex(days_order)
+        
+        best_day = day_totals.idxmax()
+        best_day_sales = day_totals.max()
 
         # KPI Metrics Row
         col1, col2, col3, col4 = st.columns(4)
@@ -76,14 +81,11 @@ def main():
         col3.metric("Top Product", best_product, f"${best_product_sales:,.0f}")
         col4.metric("Best Day", best_day, f"${best_day_sales:,.0f}")
 
-        # Storytelling Box
+        # Overview Box
         st.info(
-            f"**📖 Data Story & Strategy Insight:** During this period, the platform generated "
-            f"a grand total of **${total_revenue:,.0f}**. Your flagship product is currently "
-            f"**{best_product}**, pulling in **${best_product_sales:,.0f}**, making it the "
-            f"primary driver of revenue. Activity heavily peaks on **{best_day}s**. "
-            f"*Recommendation:* Target your heaviest marketing campaigns and promotional events "
-            f"leading up to {best_day} to maximize player engagement!"
+            f"**📖 Dashboard Overview:** Total revenue is **${total_revenue:,.0f}**. "
+            f"The flagship product is **{best_product}**, driving **${best_product_sales:,.0f}**. "
+            f"Activity heavily peaks on **{best_day}s**."
         )
 
         # Visuals
@@ -92,7 +94,6 @@ def main():
 
         with tab1:
             row1_col1, row1_col2 = st.columns(2)
-
             with row1_col1:
                 fig_donut = px.pie(
                     names=product_totals.index, values=product_totals.values, hole=0.4,
@@ -107,22 +108,12 @@ def main():
                     value_vars=[c for c in product_cols if c in df.columns],
                     var_name='Product', value_name='Sales'
                 )
-                day_product_sales = df_long.groupby(
-                    ['Day of Week', 'Product']
-                )['Sales'].sum().reset_index()
+                day_prod = df_long.groupby(['Day of Week', 'Product'])['Sales'].sum().reset_index()
+                day_prod['Day of Week'] = pd.Categorical(day_prod['Day of Week'], categories=days_order, ordered=True)
                 
-                days_order = [
-                    'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'
-                ]
-                day_product_sales['Day of Week'] = pd.Categorical(
-                    day_product_sales['Day of Week'], categories=days_order, ordered=True
-                )
-                day_product_sales = day_product_sales.sort_values(['Day of Week', 'Product'])
-
                 fig_bar = px.bar(
-                    day_product_sales, x='Day of Week', y='Sales', color='Product',
-                    title='Weekly Sales Breakdown', color_discrete_sequence=custom_colors,
-                    barmode='group'
+                    day_prod.sort_values('Day of Week'), x='Day of Week', y='Sales', color='Product',
+                    title='Weekly Sales Breakdown', barmode='group', color_discrete_sequence=custom_colors
                 )
                 fig_bar.update_layout(yaxis=dict(tickformat='$,.0f'))
                 st.plotly_chart(fig_bar, use_container_width=True)
@@ -137,70 +128,86 @@ def main():
             st.plotly_chart(fig_area, use_container_width=True)
 
         with tab3:
-            st.subheader("Weekly Sales Pivot Table")
-            pivot_table = df.groupby('Day of Week')[product_cols].sum().reset_index()
-            pivot_table['Day of Week'] = pd.Categorical(
-                pivot_table['Day of Week'], categories=days_order, ordered=True
-            )
-            pivot_table = pivot_table.sort_values('Day of Week')
-            pivot_table['Daily Total'] = pivot_table[product_cols].sum(axis=1)
-
-            display_table = pivot_table.copy()
-            for c in product_cols + ['Daily Total']:
-                display_table[c] = display_table[c].apply(lambda x: f"${x:,.0f}")
-            st.dataframe(display_table, use_container_width=True, hide_index=True)
+            st.subheader("Weekly Sales Summary")
+            pivot = df.groupby('Day of Week')[product_cols].sum().reindex(days_order).reset_index()
+            # Dynamic formatting for the table
+            st.dataframe(pivot.style.format(subset=product_cols, formatter="${:,.0f}"), use_container_width=True)
 
         st.divider()
 
-        # Smart Interactive Prompt
+        # ==========================================
+        # 2. EXPANDED SMART INSIGHTS ENGINE
+        # ==========================================
         st.subheader("🤖 Ask Your Data a Question")
         st.markdown(
-            "Type a query like: **'best product'**, **'average sales'**, "
-            "**'top 3 products'**, or **'worst day'**"
+            "Try: **'compare Lotto vs Bingo'**, **'percent of total'**, "
+            "**'is Friday better than Monday?'**, or **'weekend report'**"
         )
 
-        user_query = st.text_input("Search Insights:", placeholder="e.g., What is the top product?")
+        user_query = st.text_input("Search Insights:", placeholder="e.g., compare Lotto vs Bingo")
 
         if user_query:
-            query = user_query.lower()
+            q = user_query.lower()
 
-            if "best product" in query or "top product" in query:
-                st.success(f"**Insight:** Best product is **{best_product}** (${best_product_sales:,.0f})")
-            elif "top 3" in query or "best 3" in query:
-                top_3 = product_totals.head(3)
-                st.success(
-                    f"**Insight:** Top 3 products are:\n"
-                    f"1. {top_3.index[0]} (${top_3.iloc[0]:,.0f})\n"
-                    f"2. {top_3.index[1]} (${top_3.iloc[1]:,.0f})\n"
-                    f"3. {top_3.index[2]} (${top_3.iloc[2]:,.0f})"
-                )
-            elif "worst product" in query or "lowest product" in query:
-                worst_prod = product_totals.index[-1]
-                val = product_totals.iloc[-1]
-                st.warning(f"**Insight:** Lowest-performing is **{worst_prod}** (${val:,.0f}).")
-            elif "best day" in query or "highest day" in query:
-                st.success(f"**Insight:** Your best day is **{best_day}** (${best_day_sales:,.0f}).")
-            elif "worst day" in query or "lowest day" in query:
-                worst_day = day_totals.index[-1]
-                val = day_totals.iloc[-1]
-                st.warning(f"**Insight:** Your slowest day is **{worst_day}** (${val:,.0f}).")
-            elif "total sales" in query or "total revenue" in query:
-                st.info(f"**Insight:** Total revenue is **${total_revenue:,.0f}**.")
-            elif "average" in query:
-                st.info(f"**Insight:** You average **${avg_daily:,.0f}** in sales per active day.")
+            # A. Product Comparison (e.g., "compare Lotto vs Bingo")
+            if "compare" in q and "vs" in q:
+                try:
+                    parts = q.replace("compare", "").split("vs")
+                    p1 = parts[0].strip().title()
+                    p2 = parts[1].strip().title()
+                    
+                    if p1 in product_cols and p2 in product_cols:
+                        v1, v2 = product_totals[p1], product_totals[p2]
+                        diff = abs(v1 - v2)
+                        leader = p1 if v1 > v2 else p2
+                        st.info(f"⚖️ **Comparison:** {p1} (${v1:,.0f}) vs {p2} (${v2:,.0f}). "
+                                f"**{leader}** is leading by **${diff:,.0f}**.")
+                    else:
+                        st.warning(f"Could not find those products. Available: {', '.join(product_cols[:4])}...")
+                except:
+                    st.error("Try format: 'compare Lotto vs Bingo'")
+
+            # B. Percentage Share (e.g., "percent of total")
+            elif "percent" in q or "share" in q:
+                pct = (best_product_sales / total_revenue) * 100
+                st.info(f"📊 **Market Share:** {best_product} represents **{pct:.1f}%** of total revenue.")
+
+            # C. Day Battle (e.g., "is Friday better than Monday?")
+            elif "better than" in q:
+                found_days = [d for d in days_order if d.lower() in q]
+                if len(found_days) == 2:
+                    d1, d2 = found_days[0], found_days[1]
+                    v1, v2 = day_totals[d1], day_totals[d2]
+                    winner = d1 if v1 > v2 else d2
+                    st.success(f"📅 **Day Battle:** {d1} (${v1:,.0f}) vs {d2} (${v2:,.0f}). **{winner}** is stronger.")
+                else:
+                    st.warning("Please mention two days (e.g., 'Is Monday better than Friday?')")
+
+            # D. Weekend Performance
+            elif "weekend" in q:
+                wknd = day_totals.get('Saturday', 0) + day_totals.get('Sunday', 0)
+                st.info(f"🏖️ **Weekend Performance:** Saturday and Sunday combined for **${wknd:,.0f}**.")
+
+            # E. Legacy Queries
+            elif "best product" in q or "top product" in q:
+                st.success(f"🏆 The top product is **{best_product}** with **${best_product_sales:,.0f}**.")
+            elif "top 3" in q:
+                t3 = product_totals.head(3)
+                st.success(f"🥇 1st: {t3.index[0]} | 🥈 2nd: {t3.index[1]} | 🥉 3rd: {t3.index[2]}")
+            elif "average" in q:
+                st.info(f"📈 Average daily revenue is **${avg_daily:,.0f}**.")
+            elif "worst day" in q or "lowest day" in q:
+                w_day = day_totals.idxmin()
+                st.warning(f"📉 The slowest day is **{w_day}** (${day_totals.min():,.0f}).")
             else:
-                st.error("I am programmed to answer about 'best/worst product', 'worst day', etc.")
-            
+                st.error("I'm not sure about that one! Try asking about products, comparisons, or specific days.")
 
 # ==========================================
-# 2. BULLETPROOF PLAY BUTTON FIX
+# 3. EXECUTION HANDLER (Safe for VS Code & Cloud)
 # ==========================================
 if __name__ == '__main__':
-    # Check if the Streamlit server is already running
     if runtime.exists():
         main()
     else:
-        # If it's NOT running, we intercept the Visual Studio "Play" button!
-        # sys.argv[0] automatically gets your exact file name, so it won't crash
         sys.argv = ["streamlit", "run", sys.argv[0]]
         sys.exit(stcli.main())
